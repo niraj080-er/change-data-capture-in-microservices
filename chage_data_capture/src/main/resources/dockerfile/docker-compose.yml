@@ -1,0 +1,214 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    platform: linux/x86_64
+    image: "confluentinc/cp-zookeeper:6.2.4"
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      TZ: "UTC"
+
+  kafka:
+    platform: linux/x86_64
+    image: "confluentinc/cp-enterprise-kafka"
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 100
+      CONFLUENT_METRICS_ENABLE: 'false'
+      TZ: "UTC"
+
+  akhq:
+    platform: linux/x86_64
+    image: tchiotludo/akhq
+    container_name: akhq
+    depends_on:
+      - kafka
+      - schema-registry
+    ports:
+      - "8080:8080"
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            docker-kafka-server:
+              properties:
+                bootstrap.servers: "kafka:29092"
+              schema-registry:
+                url: "http://schema-registry:8081"
+              connect:
+                - name: "connect"
+                  url: "http://connect:8083"
+      TZ: "UTC"
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry
+    container_name: schema-registry
+    depends_on:
+      - zookeeper
+      - kafka
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_URL: zookeeper:2181
+      SCHEMA_REGISTRY_AVRO_COMPATIBILITY_LEVEL: "none"
+      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: "WARN"
+      TZ: "UTC"
+
+  # ksql-server-1:
+  #   image: confluentinc/cp-ksqldb-server
+  #   container_name: ksql-server-1
+  #   depends_on:
+  #     - kafka
+  #     - schema-registry
+  #   ports:
+  #     - "8088:8088"
+  #   environment:
+  #     KSQL_BOOTSTRAP_SERVERS: kafka:29092
+  #     KSQL_LISTENERS: http://0.0.0.0:8088
+  #     KSQL_KSQL_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+  #     KSQL_KSQL_SERVICE_ID: "my-ksql-server"
+  #     KSQL_KSQL_EXTENSION_DIR: "/etc/ksql/ext"
+  #     TZ: "UTC"
+  #   volumes:
+  #     - ./scripts:/scripts
+  #     - ./ext:/etc/ksql/ext
+
+  # ksql-server-2:
+  #   image: confluentinc/cp-ksqldb-server
+  #   container_name: ksql-server-2
+  #   depends_on:
+  #     - kafka
+  #     - schema-registry
+  #   ports:
+  #     - "28088:8088"
+  #   environment:
+  #     KSQL_BOOTSTRAP_SERVERS: kafka:29092
+  #     KSQL_LISTENERS: http://0.0.0.0:8088
+  #     KSQL_KSQL_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+  #     KSQL_KSQL_SERVICE_ID: "my-ksql-server"
+  #     KSQL_KSQL_EXTENSION_DIR: "/etc/ksql/ext"
+  #     TZ: "UTC"
+  #   volumes:
+  #     - ./scripts:/scripts
+  #     - ./ext:/etc/ksql/ext
+
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: prometheus
+  #   ports:
+  #     - "9090:9090"
+  #   command:
+  #     - "--config.file=/etc/prometheus/prometheus.yml"
+  #   volumes:
+  #     - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #     - prometheus-data:/prometheus
+  #   restart: unless-stopped
+  #   networks:
+  #     - monitoring
+  #   depends_on:
+  #     - kafka
+
+  # grafana:
+  #   image: grafana/grafana
+  #   container_name: grafana
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - grafana-data:/var/lib/grafana
+  #   restart: unless-stopped
+  #   networks:
+  #     - monitoring
+  #   depends_on:
+  #     - prometheus
+
+  # portainer:
+  #   image: portainer/portainer-ce:latest
+  #   container_name: portainer
+  #   ports:
+  #     - "9443:9443"
+  #   volumes:
+  #     - portainer-data:/data
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   restart: unless-stopped
+
+  # zipkin:
+  #   image: openzipkin/zipkin:latest
+  #   container_name: zipkin
+  #   ports:
+  #     - "9411:9411"
+  #   restart: always
+
+  postgresql:
+    image: postgres:latest
+    container_name: postgresql
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: Customer
+      TZ: "UTC"
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+
+  connect:
+    image: debezium/connect:latest
+    container_name: connect
+    depends_on:
+      - kafka
+      - schema-registry
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: my_connect_configs
+      OFFSET_STORAGE_TOPIC: my_connect_offsets
+      STATUS_STORAGE_TOPIC: my_connect_statuses
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      TZ: "UTC"
+
+  debezium-ui:
+    image: debezium/debezium-ui:1.7
+    container_name: debezium-ui
+    depends_on:
+      - connect
+    ports:
+      - "8084:8080"
+    environment:
+      DEBEZIUM_UI_API_BASE_URL: http://connect:8083
+      TZ: "UTC"
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  portainer-data:
+  postgres-data:
+  redis_data:
